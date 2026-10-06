@@ -1,235 +1,239 @@
-"""Irreducible polynomials in unicritically generated semigroups.
+"""Prime-powered images of the unicritical polynomials f(x) = x^d + c over Z.
 
-Computational side of Section 3 of arXiv:2510.10310.  The objects:
+This module is the computational side of Theorem 2.1 of
 
-* f_i(x) = x^d + c_i, and the semigroup G = ⟨f_1, …, f_s⟩ under composition.
-  A *word* (i_1, …, i_n) stands for f_{i_1} ∘ f_{i_2} ∘ ⋯ ∘ f_{i_n}; G is free
-  (Prop. 3.9), so distinct words are distinct polynomials and "length" is
-  well defined.
+    Bhardwaj, Boyer-Paulet, Hindes, Qiu, Sun,
+    "Prime-powered images and irreducible polynomials in dynamical semigroups",
+    arXiv:2510.10310 (accepted, Proc. Amer. Math. Soc. Ser. B).
 
-* Prop. 3.1 — if w is irreducible (of even degree when d is even) and
-  w ∘ (x^d + c) is reducible, then w(c) is a p-th power for some prime p | d.
-  ``prop_3_1_witnesses`` searches for reducible compositions and checks the
-  necessary condition on every one.
+The theorem:  let f(x) = x^d + c with c ∈ Z nonzero and d ≥ 2, and let
+N = 4 if d = 2 and N = 3 if d ≥ 3.  If f^N(α) = ε·y^p for some integers
+α, y, some sign ε and some prime p | d, then α is preperiodic and ε·y^p is
+periodic.  More precisely one of four explicit descriptions holds:
 
-* Prop. 3.2 — x^d + c irreducible over Q  ⟹  every iterate is irreducible
-  (stability).  ``is_stable`` checks it to a given depth.
+    (1) d = 2:                 α = ±ε y²,  ε y² is fixed or has exact period 2
+    (2) d ≥ 3 odd:             α = ε y^p,  ε y^p is a fixed point
+    (3) d ≥ 4 even, c ≠ −1:    α = ±ε y^p, ε y^p is a fixed point
+    (4) d ≥ 4 even, c = −1:    f(α) = ε y^p, ε y^p ∈ {0, −1} has exact period 2
 
-* Props. 3.5 / 3.7 / 3.8 — explicit infinite families of irreducible
-  polynomials f_1^3 ∘ g, f_1^3 ∘ f_2 ∘ f_1 ∘ g, f_1^3 ∘ f_2^3 ∘ g (f_1^4 ∘ g when
-  d = 2), whose existence gives the positive proportion in Theorem 1.1.
-  ``family_check`` verifies a family on all g up to a given length.
+NOTE ON VERSIONS.  Statement (4) is quoted above in the form it takes in the
+ACCEPTED version.  The public arXiv v1 (2510.10310) prints it as α = ±ε y^p,
+which is the d = 2 relation and cannot hold for even d ≥ 4; this was caught and
+corrected before acceptance.  ``statement_as_printed`` below keeps the arXiv v1
+reading so the difference stays visible to anyone reading the preprint.
 
-Irreducibility over Q is decided two ways.  ``is_irreducible`` is SymPy's
-exact test.  ``certificate`` looks for a prime p such that the polynomial is
-irreducible mod p — a one-line *proof* of irreducibility over Q that costs
-almost nothing even when the coefficients have hundreds of digits (as they
-do in the exceptional semigroups of Theorem 1.1).  A missing certificate
-proves nothing: x⁴ + 1 is irreducible over Q but reducible mod every prime.
+and N is sharp (Remark 1.5): f(x) = x² − 460 has f³(22) = 114² with 22 *not*
+preperiodic, and f(x) = x^d − r^d has f²(r) = −r^d.
+
+Nothing here assumes the theorem.  ``search_theorem`` finds every solution of
+f^N(α) = ε y^p in a window by brute force and ``classify`` checks each one
+against the four descriptions independently, by computing orbits.  The
+sharpness search ``search_near_misses`` looks one iterate earlier and finds
+the counterexamples that show N cannot be lowered — including the two the
+paper quotes and the ones it doesn't.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from itertools import product
-from typing import Iterator
 
-from sympy import Poly, primefactors, symbols
-
-from .dynamics import prime_power_forms
-
-x = symbols("x")
-
-SMALL_PRIMES = (2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71)
-
-
-def unicritical(c: int, d: int) -> Poly:
-    return Poly(x**d + c, x)
-
-
-def compose(outer: Poly, inner: Poly) -> Poly:
-    """outer ∘ inner."""
-    return outer.compose(inner)
-
-
-def word_polynomial(word: tuple[int, ...], coeffs, d: int) -> Poly:
-    """f_{w_1} ∘ f_{w_2} ∘ ⋯ ∘ f_{w_n}  for f_i = x^d + coeffs[i]  (the empty word is x)."""
-    poly = Poly(x, x)
-    for i in reversed(word):
-        poly = poly**d + coeffs[i]
-    return poly
-
-
-def words(s: int, max_len: int, min_len: int = 1) -> Iterator[tuple[int, ...]]:
-    for n in range(min_len, max_len + 1):
-        yield from product(range(s), repeat=n)
+from sympy import integer_nthroot, primefactors
 
 
 # --------------------------------------------------------------------------
-# irreducibility
+# iteration and orbits
 # --------------------------------------------------------------------------
 
-def is_irreducible(poly: Poly) -> bool:
-    """Exact irreducibility over Q (Gauss: for a monic integer polynomial, same as over Z)."""
-    return bool(poly.is_irreducible)
+def apply(alpha: int, c: int, d: int) -> int:
+    return alpha**d + c
 
 
-def irreducible_mod(poly: Poly, p: int) -> bool:
-    """Irreducible over F_p?  Only meaningful when p does not divide the leading coefficient."""
-    return bool(Poly(poly.as_expr(), x, modulus=p).is_irreducible)
+def iterate(alpha: int, c: int, d: int, n: int) -> int:
+    """f^n(α) for f(x) = x^d + c, exact integer arithmetic."""
+    for _ in range(n):
+        alpha = alpha**d + c
+    return alpha
 
 
-def certificate(poly: Poly, primes=SMALL_PRIMES) -> int | None:
-    """A prime p with poly irreducible mod p, if one of ``primes`` works.  Such a p proves
-    irreducibility over Q (for monic polynomials, which all of ours are)."""
-    lead = int(poly.LC())
-    for p in primes:
-        if lead % p == 0:
-            continue
-        if irreducible_mod(poly, p):
-            return p
-    return None
+def escapes(x: int, c: int, d: int) -> bool:
+    """True if the forward orbit of x provably goes to infinity.
 
+    If |x| ≥ 2 and |x|^d − |x| − |c| > 0 then |f(x)| ≥ |x|^d − |c| > |x| ≥ 2, and
+    g(t) = t^d − t − |c| is increasing for t ≥ 1, so the same inequality holds
+    for f(x): the orbit increases strictly forever.
+    """
+    ax = abs(x)
+    return ax >= 2 and ax**d - ax - abs(c) > 0
 
-def decide(poly: Poly, primes=SMALL_PRIMES) -> tuple[bool, str]:
-    """(irreducible?, how): cheap certificate first, exact factorisation as the fallback."""
-    p = certificate(poly, primes)
-    if p is not None:
-        return True, f"irreducible mod {p}"
-    return is_irreducible(poly), "exact factorisation"
-
-
-# --------------------------------------------------------------------------
-# Propositions 3.1 and 3.2
-# --------------------------------------------------------------------------
 
 @dataclass(frozen=True)
-class CompositionWitness:
-    a: int          # w = x^d + a
-    b: int          # u = x^d + b
-    reducible: bool
-    w_of_u0: int    # w(u(0)) = b^d + a
-    pth_power: bool # is w(u(0)) = y^p for some prime p | d ?
+class Orbit:
+    """Preperiodicity data of an integer point.  tail = 0 means periodic."""
+
+    preperiodic: bool
+    tail: int | None      # number of steps before the orbit enters its cycle
+    period: int | None    # exact period of the cycle
+    points: tuple[int, ...]
 
 
-def prop_3_1_witnesses(d: int, a_values, b_values) -> list[CompositionWitness]:
-    """For w = x^d + a irreducible and u = x^d + b, record whether w ∘ u is reducible and whether
-    w(u(0)) is a p-th power.  Prop. 3.1: reducible ⟹ p-th power (never the other way round)."""
-    out = []
-    for a in a_values:
-        w = unicritical(a, d)
-        if not is_irreducible(w):
-            continue
-        for b in b_values:
-            u = unicritical(b, d)
-            v = b**d + a
-            forms = [f for f in prime_power_forms(v, d) if f[0] == 1 or f[2] % 2 == 1]  # y^p, y ∈ Z
-            out.append(CompositionWitness(a, b, not is_irreducible(compose(w, u)), v, bool(forms)))
-    return out
+def orbit(alpha: int, c: int, d: int, max_steps: int = 10_000) -> Orbit:
+    """Decide whether α is preperiodic under x^d + c and, if so, find its tail and period."""
+    seen: dict[int, int] = {}
+    points: list[int] = []
+    x = alpha
+    for step in range(max_steps):
+        if x in seen:
+            first = seen[x]
+            return Orbit(True, first, step - first, tuple(points))
+        if escapes(x, c, d):
+            return Orbit(False, None, None, tuple(points))
+        seen[x] = step
+        points.append(x)
+        x = x**d + c
+    raise RuntimeError("orbit undecided after max_steps — should not happen for integer unicritical maps")
 
 
-def is_stable(c: int, d: int, depth: int) -> bool:
-    """Prop. 3.2 at finite depth: f, f², …, f^depth all irreducible (f = x^d + c)."""
-    poly = unicritical(c, d)
-    for _ in range(depth):
-        if not decide(poly)[0]:
-            return False
-        poly = poly**d + c
-    return True
+def is_preperiodic(alpha: int, c: int, d: int) -> bool:
+    return orbit(alpha, c, d).preperiodic
 
 
-# --------------------------------------------------------------------------
-# powered fixed points and 2-cycles (Definition 3.4)
-# --------------------------------------------------------------------------
-
-def powered_fixed_points(c: int, d: int) -> list[tuple[int, int]]:
-    """(y, p) with p | d prime and f(y^p) = y^p, i.e. c = y^p − y^{pd}.  Exhaustive: |y| is tiny."""
-    out = []
-    for p in primefactors(d):
-        y = 0
-        while True:
-            for s in ((y,) if y == 0 else (y, -y)):
-                if s**p - s**(p * d) == c:
-                    out.append((s, p))
-            if y >= 1 and abs(y**(p * d)) > 2 * abs(c) + 2:
-                break
-            y += 1
-    return out
+def is_periodic(alpha: int, c: int, d: int) -> bool:
+    o = orbit(alpha, c, d)
+    return o.preperiodic and o.tail == 0
 
 
-def powered_two_cycles(c: int, d: int) -> list[tuple[int, int]]:
-    """(y, p) with f(f(y^p)) = y^p and f(y^p) ≠ y^p."""
-    out = []
-    for p in primefactors(d):
-        y = 0
-        while True:
-            for s in ((y,) if y == 0 else (y, -y)):
-                v = s**p
-                f1 = v**d + c
-                if f1 != v and f1**d + c == v:
-                    out.append((s, p))
-            if y >= 1 and abs(y**(p * d)) > 2 * abs(c) + 2:
-                break
-            y += 1
-    return out
+def exact_period(alpha: int, c: int, d: int) -> int | None:
+    o = orbit(alpha, c, d)
+    return o.period if (o.preperiodic and o.tail == 0) else None
 
 
 # --------------------------------------------------------------------------
-# semigroups
+# prime powers
 # --------------------------------------------------------------------------
 
-def semigroup_report(coeffs, d: int, max_len: int, exact_up_to_degree: int = 200) -> dict:
-    """Irreducibility of every element of ⟨x^d + c_1, …, x^d + c_s⟩ up to a given word length.
+def prime_power_forms(v: int, d: int) -> list[tuple[int, int, int]]:
+    """All ways to write v = ε·y^p with ε = ±1, y ≥ 0 an integer and p a prime dividing d.
 
-    Polynomials of degree ≤ ``exact_up_to_degree`` are decided exactly; larger ones are only
-    *certified* irreducible when a mod-p certificate exists, otherwise reported as undecided.
+    Returned as (ε, y, p).  v = 0 is 0^p for every p (y = 0 is allowed in the theorem).
     """
-    coeffs = tuple(coeffs)
-    s = len(coeffs)
-    by_length = {}
-    for n in range(1, max_len + 1):
-        rows = []
-        for w in product(range(s), repeat=n):
-            poly = word_polynomial(w, coeffs, d)
-            p = certificate(poly)
-            if p is not None:
-                rows.append((w, True, f"mod {p}"))
-            elif poly.degree() <= exact_up_to_degree:
-                rows.append((w, is_irreducible(poly), "exact"))
-            else:
-                rows.append((w, None, "undecided"))
-        irreducible = sum(1 for _, r, _ in rows if r is True)
-        reducible = sum(1 for _, r, _ in rows if r is False)
-        by_length[n] = {
-            "words": len(rows),
-            "irreducible": irreducible,
-            "reducible": reducible,
-            "undecided": len(rows) - irreducible - reducible,
-            "reducible_words": [w for w, r, _ in rows if r is False],
-            "undecided_words": [w for w, r, _ in rows if r is None],
-        }
-    total = sum(v["words"] for v in by_length.values())
-    irr = sum(v["irreducible"] for v in by_length.values())
-    return {"coeffs": coeffs, "d": d, "by_length": by_length,
-            "proportion_irreducible_lower_bound": irr / total}
+    out = []
+    for p in primefactors(d):
+        if v == 0:
+            out.append((1, 0, p))
+            continue
+        root, exact = integer_nthroot(abs(v), p)
+        if exact:
+            out.append((1 if v > 0 else -1, int(root), p))
+    return out
 
 
-def is_free_up_to(coeffs, d: int, max_len: int) -> bool:
-    """Prop. 3.9 at finite length: distinct words give distinct polynomials."""
-    seen = set()
-    for w in words(len(coeffs), max_len):
-        key = tuple(int(t) for t in word_polynomial(w, coeffs, d).all_coeffs())
-        if key in seen:
+# --------------------------------------------------------------------------
+# Theorem 2.1: search and classify
+# --------------------------------------------------------------------------
+
+def threshold_iterate(d: int) -> int:
+    """N in Theorem 2.1: 4 when d = 2, 3 when d ≥ 3."""
+    return 4 if d == 2 else 3
+
+
+@dataclass(frozen=True)
+class Solution:
+    c: int
+    d: int
+    alpha: int
+    n: int
+    value: int          # f^n(α)
+    eps: int
+    y: int
+    p: int
+    alpha_orbit: Orbit
+    value_orbit: Orbit
+
+
+def statement(sol: Solution) -> tuple[bool, str]:
+    """Check a solution of f^N(α) = ε y^p against the matching description in Theorem 2.1.
+
+    Returns (matches, which_statement).  This uses only the computed orbits —
+    it does not consult the theorem's proof.
+    """
+    c, d, a, v = sol.c, sol.d, sol.alpha, sol.value
+    vo = sol.value_orbit
+    v_periodic = vo.preperiodic and vo.tail == 0
+    per = vo.period if v_periodic else None
+    if d == 2:
+        ok = a in (v, -v) and v_periodic and per in (1, 2)
+        return ok, "(1)"
+    if d % 2 == 1:
+        ok = a == v and v_periodic and per == 1
+        return ok, "(2)"
+    if c != -1:
+        ok = a in (v, -v) and v_periodic and per == 1
+        return ok, "(3)"
+    # Statement (4) holds in the form f(α) = ε y^p, which is what the accepted version prints.
+    # arXiv v1 prints α = ±ε y^p — the d = 2 relation, where N = 4 is even and f^4 fixes both
+    # points of the 2-cycle {0, −1}.  For even d ≥ 4 the threshold N = 3 is odd, so f^3 *swaps*
+    # the cycle: for f = x^4 − 1, f^3(0) = −1 and f^3(−1) = 0, and the v1 relation has no
+    # solutions.  The conclusion (α preperiodic, ε y^p periodic) is the same either way.
+    # ``statement_as_printed`` keeps the v1 reading so the difference stays visible in tests.
+    ok = v in (0, -1) and v_periodic and per == 2 and a**d + c == v
+    return ok, "(4)"
+
+
+def statement_as_printed(sol: Solution) -> bool:
+    """Theorem 2.1 (4) as printed in arXiv v1: α = ±ε y^p with ε y^p ∈ {0, −1} of exact period 2.
+    Superseded in the accepted version; kept to document that the v1 reading fails for even
+    d ≥ 4 (see ``statement``)."""
+    vo = sol.value_orbit
+    return sol.alpha in (sol.value, -sol.value) and sol.value in (0, -1) and vo.preperiodic and vo.tail == 0 and vo.period == 2
+
+
+def search_theorem(d: int, c_values, alpha_bound: int, n: int | None = None) -> list[Solution]:
+    """Every (c, α) with c in ``c_values`` (0 skipped), |α| ≤ alpha_bound and f^n(α) a prime-powered
+    integer ε y^p (p | d).  ``n`` defaults to the theorem's threshold N."""
+    n = threshold_iterate(d) if n is None else n
+    found = []
+    for c in c_values:
+        if c == 0:
+            continue
+        for a in range(-alpha_bound, alpha_bound + 1):
+            v = iterate(a, c, d, n)
+            for eps, y, p in prime_power_forms(v, d):
+                found.append(Solution(c, d, a, n, v, eps, y, p, orbit(a, c, d), orbit(v, c, d)))
+    return found
+
+
+def verify_theorem(d: int, c_values, alpha_bound: int) -> dict:
+    """Run the search at the theorem's threshold and check every solution.  Returns a report."""
+    sols = search_theorem(d, c_values, alpha_bound)
+    bad = [s for s in sols if not (s.alpha_orbit.preperiodic and s.value_orbit.preperiodic
+                                   and s.value_orbit.tail == 0 and statement(s)[0])]
+    return {"d": d, "N": threshold_iterate(d), "solutions": sols, "violations": bad,
+            "n_c": len([c for c in c_values if c != 0]), "alpha_bound": alpha_bound}
+
+
+def search_near_misses(d: int, c_values, alpha_bound: int, n: int | None = None) -> list[Solution]:
+    """Sharpness witnesses: f^n(α) = ε y^p with α NOT preperiodic, one iterate below the threshold.
+
+    Remark 1.5 of the paper gives x² − 460 (f³(22) = 114²) and x^d − r^d (f²(r) = −r^d).
+    """
+    n = threshold_iterate(d) - 1 if n is None else n
+    return [s for s in search_theorem(d, c_values, alpha_bound, n) if not s.alpha_orbit.preperiodic]
+
+
+# --------------------------------------------------------------------------
+# the small cases the paper settles by computer
+# --------------------------------------------------------------------------
+
+def mod8_obstruction(c: int, d: int = 2, n: int = 4) -> bool:
+    """The Magma check in the proof of Theorem 2.1: for f = x² + c with c ∈ {1, 2},
+    f⁴(α) ≡ ±y² (mod 8) has no solutions α, y ∈ Z/8Z — hence none in Z.
+
+    Returns True when the congruence has no solutions (so Theorem 2.1 is vacuous for that c)."""
+    residues = {(eps * y * y) % 8 for y in range(8) for eps in (1, -1)}
+    for a in range(8):
+        v = a
+        for _ in range(n):
+            v = (v**d + c) % 8
+        if v in residues:
             return False
-        seen.add(key)
     return True
-
-
-def family_check(prefix: tuple[int, ...], coeffs, d: int, max_len_g: int) -> dict:
-    """Check that F ∘ g is irreducible for every g ∈ G of length ≤ max_len_g (and g = x),
-    where F is the word ``prefix``.  E.g. prefix = (0, 0, 0) is f_1^3 (Prop. 3.5)."""
-    results = {}
-    for g in [()] + list(words(len(coeffs), max_len_g)):
-        poly = word_polynomial(prefix + g, coeffs, d)
-        results[g] = decide(poly)
-    return {"prefix": prefix, "all_irreducible": all(r[0] for r in results.values()), "results": results}
