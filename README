@@ -10,10 +10,34 @@
 
 ## Status
 
-In progress. I'm building this myself, module by module, alongside coursework at Yale. Nothing below is finished yet, this file gets updated as pieces land.
+- **`dynamics.py` — working.** Brute-force search and classification for Theorem 2.1, plus the sharpness search.
+- **`irreducibility.py` — in progress.** Section 3 (building irreducible polynomials in the semigroup). Stub only for now.
 
-## What it's for
+I'm building this myself, module by module, alongside coursework at Yale.
 
-The paper proves a classification theorem (Theorem 2.1) about what happens when you iterate `f(x) = x^d + c` and land on a prime power, and uses it to build irreducible polynomials in the semigroups `⟨x^d + c_1, …, x^d + c_s⟩`. I want a way to check the theorem computationally — brute-force search for every solution in a window and see whether it lines up with what the proof claims — rather than only trusting the proof by hand.
+## What it does
+
+The paper proves a classification theorem (Theorem 2.1): if iterating `f(x) = x^d + c` enough times lands on a prime power, the starting point has to be preperiodic. I didn't want to only trust the proof by hand, so `dynamics.py` checks it directly:
+
+- `search_theorem` finds every solution of `f^N(α) = ε·y^p` in a window by brute force
+- `statement` checks each one against the theorem's four cases by computing orbits, not by using the proof
+- `search_near_misses` looks one iterate early to find the examples showing the bound can't be lowered
+
+## Results so far
+
+| d | maps (c) | \|α\| ≤ | prime-power hits | mismatches |
+|---|---|---|---|---|
+| 2 | 1,200 | 40 | 33 | 0 |
+| 3 | 600 | 25 | 0 | 0 |
+| 4 | 400 | 12 | 5 | 0 |
+| 5 | 200 | 8 | 0 | 0 |
+| 6 | 120 | 6 | 10 | 0 |
+
+2,520 maps, 48 hits, every one matches the theorem. Runs in about a second. The sharpness search recovers the paper's example `x² − 460`, where `f³(22) = 114²` but 22 isn't preperiodic.
+
+## Run it
+
+    pip install sympy
+    python -c "import dynamics as D; r = D.verify_theorem(2, range(-600, 601), 40); print(len(r['solutions']), 'hits,', len(r['violations']), 'mismatches')"
 
 MIT licensed.
